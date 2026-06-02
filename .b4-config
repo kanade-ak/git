@@ -1,0 +1,3 @@
+[b4]
+send-same-thread = shallow
+prep-cover-template = ./.b4-cover-template
