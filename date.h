@@ -69,5 +69,6 @@ void datestamp(struct strbuf *out);
 #define approxidate(s) approxidate_careful((s), NULL)
 timestamp_t approxidate_careful(const char *, int *);
 int date_overflows(timestamp_t date);
+int date_overflows_time_t(timestamp_t date);
 time_t tm_to_time_t(const struct tm *tm);
 #endif

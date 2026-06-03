@@ -615,7 +615,7 @@ static void dos_time(timestamp_t *timestamp, int *dos_date, int *dos_time)
 	time_t time;
 	struct tm tm;
 
-	if (date_overflows(*timestamp))
+	if (date_overflows_time_t(*timestamp))
 		die(_("timestamp too large for this system: %"PRItime),
 		    *timestamp);
 	time = (time_t)*timestamp;

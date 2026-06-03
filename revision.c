@@ -24,6 +24,7 @@
 #include "reflog-walk.h"
 #include "patch-ids.h"
 #include "decorate.h"
+#include "date.h"
 #include "string-list.h"
 #include "line-log.h"
 #include "mailmap.h"
@@ -1468,7 +1469,7 @@ static int limit_list(struct rev_info *revs)
 		if (commit == interesting_cache)
 			interesting_cache = NULL;
 
-		if (revs->max_age != -1 && (commit->date < revs->max_age))
+		if (revs->max_age != TIME_MAX && (commit->date < revs->max_age))
 			obj->flags |= UNINTERESTING;
 		if (process_parents(revs, commit, NULL, &queue) < 0) {
 			clear_prio_queue(&queue);
@@ -1481,10 +1482,10 @@ static int limit_list(struct rev_info *revs)
 				continue;
 			break;
 		}
-		if (revs->min_age != -1 && (commit->date > revs->min_age) &&
+		if (revs->min_age != TIME_MAX && (commit->date > revs->min_age) &&
 		    !revs->line_level_traverse)
 			continue;
-		if (revs->max_age_as_filter != -1 &&
+		if (revs->max_age_as_filter != TIME_MAX &&
 			(commit->date < revs->max_age_as_filter) && !revs->line_level_traverse)
 			continue;
 		date = commit->date;
@@ -2294,7 +2295,7 @@ static timestamp_t parse_age(const char *arg)
 
 	errno = 0;
 	num = parse_timestamp(arg, &p, 10);
-	if (errno || *p || p == arg)
+	if (errno || *p || p == arg || date_overflows(num))
 		die("'%s': not a number of seconds since epoch", arg);
 	return num;
 }
@@ -3729,7 +3730,7 @@ static void explore_walk_step(struct rev_info *revs)
 	if (revs->sort_order == REV_SORT_BY_AUTHOR_DATE)
 		record_author_date(&info->author_date, c);
 
-	if (revs->max_age != -1 && (c->date < revs->max_age))
+	if (revs->max_age != TIME_MAX && (c->date < revs->max_age))
 		c->object.flags |= UNINTERESTING;
 
 	if (process_parents(revs, c, NULL, NULL) < 0)
@@ -4186,12 +4187,12 @@ enum commit_action get_commit_action(struct rev_info *revs, struct commit *commi
 		if (!line_log_process_ranges_arbitrary_commit(revs, commit))
 			return commit_ignore;
 	}
-	if (revs->min_age != -1 &&
+	if (revs->min_age != TIME_MAX &&
 	    comparison_date(revs, commit) > revs->min_age)
-			return commit_ignore;
-	if (revs->max_age_as_filter != -1 &&
+		return commit_ignore;
+	if (revs->max_age_as_filter != TIME_MAX &&
 	    comparison_date(revs, commit) < revs->max_age_as_filter)
-			return commit_ignore;
+		return commit_ignore;
 	if (revs->min_parents || (revs->max_parents >= 0)) {
 		int n = commit_list_count(commit->parents);
 		if ((n < revs->min_parents) ||
@@ -4357,7 +4358,7 @@ static struct commit *get_revision_1(struct rev_info *revs)
 		 * that we'd otherwise have done in limit_list().
 		 */
 		if (!revs->limited) {
-			if (revs->max_age != -1 &&
+			if (revs->max_age != TIME_MAX &&
 			    comparison_date(revs, commit) < revs->max_age)
 				continue;
 

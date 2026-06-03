@@ -155,8 +155,8 @@ static void builtin_diff_index(struct rev_info *revs,
 	 * and there is no revision filtering parameters.
 	 */
 	if (revs->pending.nr != 1 ||
-	    revs->max_count != -1 || revs->min_age != -1 ||
-	    revs->max_age != -1)
+	    revs->max_count != -1 || revs->min_age != TIME_MAX ||
+	    revs->max_age != TIME_MAX)
 		usage(builtin_diff_usage);
 	if (!(option & DIFF_INDEX_CACHED)) {
 		setup_work_tree(the_repository);

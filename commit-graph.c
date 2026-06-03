@@ -2693,6 +2693,27 @@ int write_commit_graph(struct odb_source *source,
 
 	ctx.trust_generation_numbers = validate_mixed_generation_chain(g);
 
+	for (i = 0; i < ctx.commits.nr; i++) {
+		struct commit *c = ctx.commits.items[i];
+
+		if (repo_parse_commit(r, c)) {
+			error(_("failed to parse commit %s"),
+			      oid_to_hex(&c->object.oid));
+			res = -1;
+			if (!ctx.split)
+				ctx.num_commit_graphs_after = 0;
+			goto cleanup;
+		}
+		if (c->date < 0) {
+			error(_("cannot write commit-graph with negative commit date for %s"),
+			      oid_to_hex(&c->object.oid));
+			res = -1;
+			if (!ctx.split)
+				ctx.num_commit_graphs_after = 0;
+			goto cleanup;
+		}
+	}
+
 	compute_topological_levels(&ctx);
 	if (ctx.write_generation_data)
 		compute_generation_numbers(&ctx);

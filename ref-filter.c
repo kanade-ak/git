@@ -1017,7 +1017,7 @@ struct atom_value {
 	ssize_t s_size;
 	int (*handler)(struct atom_value *atomv, struct ref_formatting_state *state,
 		       struct strbuf *err);
-	uintmax_t value; /* used for sorting when not FIELD_STR */
+	intmax_t value; /* used for sorting when not FIELD_STR */
 	struct used_atom *atom;
 };
 
@@ -1703,8 +1703,9 @@ static void grab_date(const char *buf, struct atom_value *v, const char *atomnam
 
 	if (!eoemail)
 		goto bad;
+	errno = 0;
 	timestamp = parse_timestamp(eoemail + 2, &zone, 10);
-	if (timestamp == TIME_MAX)
+	if (errno || date_overflows(timestamp))
 		goto bad;
 	errno = 0;
 	tz = strtol(zone, NULL, 10);
@@ -2036,7 +2037,7 @@ static void grab_sub_body_contents(struct atom_value *val, int deref, struct exp
 				v->s_size = buf_size;
 			} else if (atom->u.raw_data.option == RAW_LENGTH) {
 				v->value = buf_size;
-				v->s = xstrfmt("%"PRIuMAX, v->value);
+				v->s = xstrfmt("%"PRIuMAX, (uintmax_t)v->value);
 			}
 			continue;
 		}
@@ -2064,7 +2065,7 @@ static void grab_sub_body_contents(struct atom_value *val, int deref, struct exp
 			v->s = xmemdupz(bodypos, bodylen);
 		else if (atom->u.contents.option == C_LENGTH) {
 			v->value = strlen(subpos);
-			v->s = xstrfmt("%"PRIuMAX, v->value);
+			v->s = xstrfmt("%"PRIuMAX, (uintmax_t)v->value);
 		} else if (atom->u.contents.option == C_BODY)
 			v->s = xmemdupz(bodypos, nonsiglen);
 		else if (atom->u.contents.option == C_SIG)

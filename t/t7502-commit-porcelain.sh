@@ -117,6 +117,21 @@ test_expect_success 'the basics' '
 
 '
 
+test_expect_success 'commit accepts negative unix timestamp dates' '
+	before=$(git rev-parse HEAD) &&
+	test_when_finished "git reset --hard $before" &&
+	echo negative >negative-date &&
+	git add negative-date &&
+	GIT_AUTHOR_DATE="-1 +0000" GIT_COMMITTER_DATE="-1 +0000" \
+		git commit -m "negative date" &&
+	echo "-1 -1" >expect &&
+	git log -1 --format="%at %ct" >actual &&
+	test_cmp expect actual &&
+	git cat-file commit HEAD >commit &&
+	grep "^author .* -1 +0000$" commit &&
+	grep "^committer .* -1 +0000$" commit
+'
+
 test_expect_success 'partial' '
 
 	echo another >"commit is" &&

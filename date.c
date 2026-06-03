@@ -12,6 +12,43 @@
 #include "pager.h"
 #include "strbuf.h"
 
+static int is_leap_year(int year)
+{
+	return (!(year % 4) && (year % 100)) || !(year % 400);
+}
+
+static int days_in_month(int year, int month)
+{
+	static const int mdays[] = {
+		31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+	};
+
+	if (month == 1 && is_leap_year(year))
+		return 29;
+	return mdays[month];
+}
+
+static int timestamp_add(timestamp_t time, timestamp_t delta,
+			 timestamp_t *result)
+{
+	if ((delta > 0 && time > TIME_MAX - delta) ||
+	    (delta < 0 && time < TIME_MIN - delta))
+		return -1;
+	*result = time + delta;
+	return date_overflows(*result) ? -1 : 0;
+}
+
+int date_overflows_time_t(timestamp_t t)
+{
+	time_t sys;
+
+	if (date_overflows(t))
+		return 1;
+
+	sys = t;
+	return t != sys || (t < 0) != (sys < 0);
+}
+
 /*
  * This is like mktime, but without normalization of tm_wday and tm_yday.
  */
@@ -36,6 +73,93 @@ time_t tm_to_time_t(const struct tm *tm)
 		tm->tm_hour * 60*60 + tm->tm_min * 60 + tm->tm_sec;
 }
 
+static timestamp_t days_from_civil(int year, int month, int day)
+{
+	intmax_t y = year;
+	intmax_t m = month + 1;
+	intmax_t d = day;
+	intmax_t era;
+	unsigned yoe, doy, doe;
+
+	y -= m <= 2;
+	era = (y >= 0 ? y : y - 399) / 400;
+	yoe = y - era * 400;
+	doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+	doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+	return era * 146097 + (intmax_t)doe - 719468;
+}
+
+static int tm_to_timestamp_t(const struct tm *tm, timestamp_t *result)
+{
+	int year = tm->tm_year + 1900;
+	int month = tm->tm_mon;
+	timestamp_t days, seconds;
+
+	if (month < 0 || month > 11)
+		return -1;
+	if (tm->tm_mday < 1 || tm->tm_mday > days_in_month(year, month))
+		return -1;
+	if (tm->tm_hour < 0 || tm->tm_min < 0 || tm->tm_sec < 0)
+		return -1;
+
+	days = days_from_civil(year, month, tm->tm_mday);
+	if (days < TIME_MIN / 86400 || days > TIME_MAX / 86400)
+		return -1;
+	seconds = days * 86400;
+	if (timestamp_add(seconds, tm->tm_hour * 3600, &seconds) ||
+	    timestamp_add(seconds, tm->tm_min * 60, &seconds) ||
+	    timestamp_add(seconds, tm->tm_sec, &seconds))
+		return -1;
+	*result = seconds;
+	return 0;
+}
+
+static struct tm *timestamp_to_tm(timestamp_t time, struct tm *tm)
+{
+	timestamp_t days = time / 86400;
+	int rem = time % 86400;
+	intmax_t z, era, y;
+	unsigned doe, yoe, doy, mp;
+	int month, day, wday;
+
+	if (date_overflows(time))
+		return NULL;
+
+	if (rem < 0) {
+		rem += 86400;
+		days--;
+	}
+
+	z = days + 719468;
+	era = (z >= 0 ? z : z - 146096) / 146097;
+	doe = z - era * 146097;
+	yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+	y = yoe + era * 400;
+	doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+	mp = (5 * doy + 2) / 153;
+	day = doy - (153 * mp + 2) / 5 + 1;
+	month = mp + (mp < 10 ? 2 : -10);
+	y += month <= 1;
+
+	if (y < INT_MIN + 1900LL || y > INT_MAX)
+		return NULL;
+
+	memset(tm, 0, sizeof(*tm));
+	tm->tm_year = y - 1900;
+	tm->tm_mon = month;
+	tm->tm_mday = day;
+	tm->tm_hour = rem / 3600;
+	tm->tm_min = (rem % 3600) / 60;
+	tm->tm_sec = rem % 60;
+	tm->tm_yday = days - days_from_civil((int)y, 0, 1);
+	wday = (days + 4) % 7;
+	if (wday < 0)
+		wday += 7;
+	tm->tm_wday = wday;
+	tm->tm_isdst = 0;
+	return tm;
+}
+
 static const char *month_names[] = {
 	"January", "February", "March", "April", "May", "June",
 	"July", "August", "September", "October", "November", "December"
@@ -45,24 +169,11 @@ static const char *weekday_names[] = {
 	"Sundays", "Mondays", "Tuesdays", "Wednesdays", "Thursdays", "Fridays", "Saturdays"
 };
 
-static time_t gm_time_t(timestamp_t time, int tz)
+static timestamp_t timezone_delta(int tz)
 {
-	int minutes;
+	int minutes = (tz / 100) * 60 + (tz % 100);
 
-	minutes = tz < 0 ? -tz : tz;
-	minutes = (minutes / 100)*60 + (minutes % 100);
-	minutes = tz < 0 ? -minutes : minutes;
-
-	if (minutes > 0) {
-		if (unsigned_add_overflows(time, minutes * 60))
-			die("Timestamp+tz too large: %"PRItime" +%04d",
-			    time, tz);
-	} else if (time < -minutes * 60)
-		die("Timestamp before Unix epoch: %"PRItime" %04d", time, tz);
-	time += minutes * 60;
-	if (date_overflows(time))
-		die("Timestamp too large for this system: %"PRItime, time);
-	return (time_t)time;
+	return (timestamp_t)minutes * 60;
 }
 
 /*
@@ -72,13 +183,19 @@ static time_t gm_time_t(timestamp_t time, int tz)
  */
 static struct tm *time_to_tm(timestamp_t time, int tz, struct tm *tm)
 {
-	time_t t = gm_time_t(time, tz);
-	return gmtime_r(&t, tm);
+	timestamp_t adjusted;
+
+	if (timestamp_add(time, timezone_delta(tz), &adjusted))
+		return NULL;
+	return timestamp_to_tm(adjusted, tm);
 }
 
 static struct tm *time_to_tm_local(timestamp_t time, struct tm *tm)
 {
 	time_t t = time;
+
+	if (date_overflows_time_t(time))
+		return NULL;
 	return localtime_r(&t, tm);
 }
 
@@ -115,7 +232,7 @@ static int local_tzoffset(timestamp_t time)
 {
 	struct tm tm;
 
-	if (date_overflows(time))
+	if (date_overflows_time_t(time))
 		die("Timestamp too large for this system: %"PRItime, time);
 
 	return local_time_tzoffset((time_t)time, &tm);
@@ -526,7 +643,7 @@ static int set_date(int year, int month, int day, struct tm *now_tm, time_t now,
 				return 1;
 			r->tm_year = now_tm->tm_year;
 		}
-		else if (year >= 1970 && year < 2100)
+		else if (year >= 1000 && year < 2100)
 			r->tm_year = year - 1900;
 		else if (year > 70 && year < 100)
 			r->tm_year = year;
@@ -853,10 +970,12 @@ static int match_object_header_date(const char *date, timestamp_t *timestamp, in
 	timestamp_t stamp;
 	int ofs;
 
-	if (*date < '0' || '9' < *date)
+	if (!isdigit(*date) && !(*date == '-' && isdigit(date[1])))
 		return -1;
+	errno = 0;
 	stamp = parse_timestamp(date, &end, 10);
-	if (*end != ' ' || stamp == TIME_MAX || (end[1] != '+' && end[1] != '-'))
+	if (errno || *end != ' ' || date_overflows(stamp) ||
+	    (end[1] != '+' && end[1] != '-'))
 		return -1;
 	date = end + 2;
 	ofs = strtol(date, &end, 10);
@@ -869,7 +988,6 @@ static int match_object_header_date(const char *date, timestamp_t *timestamp, in
 	*offset = ofs;
 	return 0;
 }
-
 
 /* timestamp of 2099-12-31T23:59:59Z, including 32 leap days */
 static const timestamp_t timestamp_max = (((timestamp_t)2100 - 1970) * 365 + 32) * 24 * 60 * 60 - 1;
@@ -899,6 +1017,8 @@ int parse_date_basic(const char *date, timestamp_t *timestamp, int *offset)
 	*offset = -1;
 	tm_gmt = 0;
 
+	if (!match_object_header_date(date, timestamp, offset))
+		return 0; /* success */
 	if (*date == '@' &&
 	    !match_object_header_date(date + 1, timestamp, offset))
 		return 0; /* success */
@@ -926,8 +1046,7 @@ int parse_date_basic(const char *date, timestamp_t *timestamp, int *offset)
 	}
 
 	/* do not use mktime(), which uses local timezone, here */
-	*timestamp = tm_to_time_t(&tm);
-	if (*timestamp == -1)
+	if (tm_to_timestamp_t(&tm, timestamp))
 		return -1;
 
 	if (*offset == -1) {
@@ -944,12 +1063,12 @@ int parse_date_basic(const char *date, timestamp_t *timestamp, int *offset)
 	}
 
 	if (!tm_gmt) {
-		if (*offset > 0 && *offset * 60 > *timestamp)
+		if (timestamp_add(*timestamp, -(timestamp_t)*offset * 60,
+				  timestamp))
 			return -1;
-		if (*offset < 0 && -*offset * 60 > timestamp_max - *timestamp)
-			return -1;
-		*timestamp -= *offset * 60;
 	}
+	if (*timestamp > timestamp_max)
+		return -1;
 
 	return 0; /* success */
 }
@@ -1430,17 +1549,5 @@ timestamp_t approxidate_careful(const char *date, int *error_ret)
 
 int date_overflows(timestamp_t t)
 {
-	time_t sys;
-
-	/* If we overflowed our timestamp data type, that's bad... */
-	if ((uintmax_t)t >= TIME_MAX)
-		return 1;
-
-	/*
-	 * ...but we also are going to feed the result to system
-	 * functions that expect time_t, which is often "signed long".
-	 * Make sure that we fit into time_t, as well.
-	 */
-	sys = t;
-	return t != sys || (t < 1) != (sys < 1);
+	return t == TIME_MAX || t == TIME_MIN;
 }

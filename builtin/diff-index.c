@@ -66,7 +66,7 @@ int cmd_diff_index(int argc,
 	 * and there is no revision filtering parameters.
 	 */
 	if (rev.pending.nr != 1 ||
-	    rev.max_count != -1 || rev.min_age != -1 || rev.max_age != -1)
+	    rev.max_count != -1 || rev.min_age != TIME_MAX || rev.max_age != TIME_MAX)
 		usage(diff_cache_usage);
 	if (!(option & DIFF_INDEX_CACHED)) {
 		setup_work_tree(the_repository);

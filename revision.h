@@ -407,9 +407,9 @@ struct rev_info {
 	.pruning.flags.quick = 1, \
 	.sort_order = REV_SORT_IN_GRAPH_ORDER, \
 	.dense = 1, \
-	.max_age = -1, \
-	.max_age_as_filter = -1, \
-	.min_age = -1, \
+	.max_age = TIME_MAX, \
+	.max_age_as_filter = TIME_MAX, \
+	.min_age = TIME_MAX, \
 	.skip_count = -1, \
 	.max_count = -1, \
 	.max_parents = -1, \

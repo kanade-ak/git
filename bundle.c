@@ -302,7 +302,7 @@ static int is_tag_in_date_range(struct object *tag, struct rev_info *revs)
 	timestamp_t date;
 	int result = 1;
 
-	if (revs->max_age == -1 && revs->min_age == -1)
+	if (revs->max_age == TIME_MAX && revs->min_age == TIME_MAX)
 		goto out;
 
 	buf = odb_read_object(the_repository->objects, &tag->oid, &type, &size);
@@ -316,8 +316,8 @@ static int is_tag_in_date_range(struct object *tag, struct rev_info *revs)
 	if (!line++)
 		goto out;
 	date = parse_timestamp(line, NULL, 10);
-	result = (revs->max_age == -1 || revs->max_age < date) &&
-		(revs->min_age == -1 || revs->min_age > date);
+	result = (revs->max_age == TIME_MAX || revs->max_age < date) &&
+		(revs->min_age == TIME_MAX || revs->min_age > date);
 out:
 	free(buf);
 	return result;
