@@ -1159,6 +1159,28 @@ void transport_check_allowed(const char *type)
 		die(_("transport '%s' not allowed"), type);
 }
 
+static int clone_url_bypass;
+
+void transport_set_clone_url_bypass(int enabled)
+{
+	clone_url_bypass = enabled;
+}
+
+int transport_clone_url_bypass_enabled(void)
+{
+	return clone_url_bypass;
+}
+
+void transport_check_url_allowed(const char *url)
+{
+	if (transport_clone_url_bypass_enabled())
+		return;
+
+	if (!url_is_allowed_by_kanade_whitelist(url))
+		die(_("refusing to access '%s': only kanade.one remotes are allowed"),
+		    url);
+}
+
 static struct transport_vtable bundle_vtable = {
 	.get_refs_list	= get_refs_from_bundle,
 	.fetch_refs	= fetch_refs_from_bundle,
@@ -1196,6 +1218,7 @@ struct transport *transport_get(struct remote *remote, const char *url)
 
 	if (!url)
 		url = remote->url.v[0];
+	transport_check_url_allowed(url);
 	ret->url = url;
 
 	p = url;

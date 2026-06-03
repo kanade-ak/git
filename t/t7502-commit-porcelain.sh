@@ -129,7 +129,11 @@ test_expect_success 'commit accepts negative unix timestamp dates' '
 	test_cmp expect actual &&
 	git cat-file commit HEAD >commit &&
 	grep "^author .* -1 +0000$" commit &&
-	grep "^committer .* -1 +0000$" commit
+	grep "^committer .* -1 +0000$" commit &&
+	git fsck --strict &&
+	git commit-graph write --reachable &&
+	git commit-graph verify &&
+	git gc
 '
 
 test_expect_success 'partial' '

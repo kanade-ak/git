@@ -43,6 +43,12 @@ static CURL *curl_default;
 
 char curl_errorstr[CURL_ERROR_SIZE];
 
+static void kanade_check_http_url_allowed(const char *url)
+{
+	if (!git_env_bool(GIT_KANADE_CLONE_REMOTE_ACCESS, 0))
+		transport_check_url_allowed(url);
+}
+
 static int curl_ssl_verify = -1;
 static int curl_ssl_try;
 static char *curl_http_version;
@@ -1641,14 +1647,10 @@ struct active_request_slot *get_active_slot(void)
 	curl_easy_setopt(slot->curl, CURLOPT_RANGE, NULL);
 
 	/*
-	 * Default following to off unless "ALWAYS" is configured; this gives
-	 * callers a sane starting point, and they can tweak for individual
-	 * HTTP_FOLLOW_* cases themselves.
+	 * Keep redirects disabled so the kanade.one whitelist cannot be
+	 * bypassed by a Location header pointing at another domain.
 	 */
-	if (http_follow_config == HTTP_FOLLOW_ALWAYS)
-		curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 1L);
-	else
-		curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 0L);
+	curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 0L);
 
 	curl_easy_setopt(slot->curl, CURLOPT_IPRESOLVE, git_curl_ipresolve);
 	curl_easy_setopt(slot->curl, CURLOPT_HTTPAUTH, http_auth_methods);
@@ -2260,9 +2262,6 @@ static int http_request(const char *url,
 	strbuf_addstr(&buf, "Pragma:");
 	if (options->no_cache)
 		strbuf_addstr(&buf, " no-cache");
-	if (options->initial_request &&
-	    http_follow_config == HTTP_FOLLOW_INITIAL)
-		curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 1L);
 
 	headers = curl_slist_append(headers, buf.buf);
 
@@ -2275,6 +2274,7 @@ static int http_request(const char *url,
 
 	headers = http_append_auth_header(&http_auth, headers);
 
+	kanade_check_http_url_allowed(url);
 	curl_easy_setopt(slot->curl, CURLOPT_URL, url);
 	curl_easy_setopt(slot->curl, CURLOPT_HTTPHEADER, headers);
 	curl_easy_setopt(slot->curl, CURLOPT_ENCODING, "");
@@ -2757,6 +2757,7 @@ struct http_pack_request *new_direct_http_pack_request(
 	preq->headers = object_request_headers();
 	curl_easy_setopt(preq->slot->curl, CURLOPT_WRITEDATA, preq->packfile);
 	curl_easy_setopt(preq->slot->curl, CURLOPT_WRITEFUNCTION, fwrite);
+	kanade_check_http_url_allowed(preq->url);
 	curl_easy_setopt(preq->slot->curl, CURLOPT_URL, preq->url);
 	curl_easy_setopt(preq->slot->curl, CURLOPT_HTTPHEADER, preq->headers);
 
@@ -2931,6 +2932,7 @@ struct http_object_request *new_http_object_request(const char *base_url,
 	curl_easy_setopt(freq->slot->curl, CURLOPT_FAILONERROR, 0L);
 	curl_easy_setopt(freq->slot->curl, CURLOPT_WRITEFUNCTION, fwrite_sha1_file);
 	curl_easy_setopt(freq->slot->curl, CURLOPT_ERRORBUFFER, freq->errorstr);
+	kanade_check_http_url_allowed(freq->url);
 	curl_easy_setopt(freq->slot->curl, CURLOPT_URL, freq->url);
 	curl_easy_setopt(freq->slot->curl, CURLOPT_HTTPHEADER, freq->headers);
 

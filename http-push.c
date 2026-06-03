@@ -11,6 +11,7 @@
 #include "diff.h"
 #include "revision.h"
 #include "remote.h"
+#include "transport.h"
 #include "list-objects.h"
 #include "setup.h"
 #include "sigchain.h"
@@ -196,6 +197,7 @@ static void curl_setup_http_get(CURL *curl, const char *url,
 		const char *custom_req)
 {
 	curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+	transport_check_url_allowed(url);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, custom_req);
 	curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, fwrite_null);
@@ -206,6 +208,7 @@ static void curl_setup_http(CURL *curl, const char *url,
 		curl_write_callback write_fn)
 {
 	curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
+	transport_check_url_allowed(url);
 	curl_easy_setopt(curl, CURLOPT_URL, url);
 	curl_easy_setopt(curl, CURLOPT_INFILE, buffer);
 	curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE,

@@ -861,9 +861,11 @@ static int verify_headers(const void *data, unsigned long size,
 static timestamp_t parse_timestamp_from_buf(const char **start, const char *end)
 {
 	const char *p = *start;
-	char buf[24]; /* big enough for 2^64 */
+	char buf[24]; /* big enough for intmax_t */
 	size_t i = 0;
 
+	if (p < end && *p == '-')
+		buf[i++] = *p++;
 	while (p < end && isdigit(*p)) {
 		if (i >= ARRAY_SIZE(buf) - 1)
 			return TIME_MAX;
@@ -926,10 +928,11 @@ static int fsck_ident(const char **ident, const char *ident_end,
 	 */
 	while (*p == ' ' || *p == '\t')
 		p++;
-	if (!isdigit(*p))
+	if (!isdigit(*p) && !(*p == '-' && isdigit(p[1])))
 		return report(options, oid, type, FSCK_MSG_BAD_DATE,
 			      "invalid author/committer line - bad date");
-	if (*p == '0' && p[1] != ' ')
+	if ((*p == '0' && p[1] != ' ') ||
+	    (*p == '-' && p[1] == '0' && p[2] != ' '))
 		return report(options, oid, type, FSCK_MSG_ZERO_PADDED_DATE, "invalid author/committer line - zero-padded date");
 	if (date_overflows(parse_timestamp_from_buf(&p, ident_end)))
 		return report(options, oid, type, FSCK_MSG_BAD_DATE_OVERFLOW, "invalid author/committer line - date causes integer overflow");

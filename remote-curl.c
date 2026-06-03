@@ -61,6 +61,14 @@ struct options {
 static struct options options;
 static struct string_list cas_options = STRING_LIST_INIT_DUP;
 
+static void kanade_check_rpc_url_allowed(const char *service_url)
+{
+	if (git_env_bool(GIT_KANADE_CLONE_REMOTE_ACCESS, 0) &&
+	    strstr(service_url, "git-upload-pack"))
+		return;
+	transport_check_url_allowed(service_url);
+}
+
 static int set_option(const char *name, size_t namelen, const char *value)
 {
 	if (!strncmp(name, "verbosity", namelen)) {
@@ -891,6 +899,7 @@ static int probe_rpc(struct rpc_state *rpc, struct slot_results *results)
 
 	curl_easy_setopt(slot->curl, CURLOPT_NOBODY, 0L);
 	curl_easy_setopt(slot->curl, CURLOPT_POST, 1L);
+	kanade_check_rpc_url_allowed(rpc->service_url);
 	curl_easy_setopt(slot->curl, CURLOPT_URL, rpc->service_url);
 	curl_easy_setopt(slot->curl, CURLOPT_ENCODING, NULL);
 	curl_easy_setopt(slot->curl, CURLOPT_POSTFIELDS, "0000");
@@ -976,6 +985,7 @@ retry:
 
 	curl_easy_setopt(slot->curl, CURLOPT_NOBODY, 0L);
 	curl_easy_setopt(slot->curl, CURLOPT_POST, 1L);
+	kanade_check_rpc_url_allowed(rpc->service_url);
 	curl_easy_setopt(slot->curl, CURLOPT_URL, rpc->service_url);
 	curl_easy_setopt(slot->curl, CURLOPT_ENCODING, "");
 

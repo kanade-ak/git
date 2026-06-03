@@ -15,6 +15,7 @@
 #include "commit-graph.h"
 #include "odb.h"
 #include "oid-array.h"
+#include "oidset.h"
 #include "path.h"
 #include "alloc.h"
 #include "hashmap.h"
@@ -2064,6 +2065,81 @@ static void copy_oids_to_commits(struct write_commit_graph_context *ctx)
 	stop_progress(&ctx->progress);
 }
 
+static int commit_parent_in_graph_or_set(struct commit *parent,
+					 struct oidset *included,
+					 struct commit_graph *base_graph)
+{
+	uint32_t pos;
+
+	if (oidset_contains(included, &parent->object.oid))
+		return 1;
+	return base_graph && find_commit_pos_in_graph(parent, base_graph, &pos);
+}
+
+static void filter_commits_for_commit_graph(struct write_commit_graph_context *ctx,
+					    struct commit_graph *base_graph)
+{
+	struct oidset included = OIDSET_INIT;
+	uint32_t i, dst;
+	int changed;
+
+	oidset_init(&included, ctx->commits.nr);
+
+	/*
+	 * The commit-graph file format stores commit dates in 34 unsigned bits.
+	 * Keep negative-date commits out of the graph instead of writing dates
+	 * that would be read back as different instants.
+	 */
+	for (i = 0; i < ctx->commits.nr; i++) {
+		struct commit *c = ctx->commits.items[i];
+
+		if (repo_parse_commit_no_graph(ctx->r, c)) {
+			oidset_insert(&included, &c->object.oid);
+			continue;
+		}
+		if (c->date >= 0)
+			oidset_insert(&included, &c->object.oid);
+	}
+
+	do {
+		changed = 0;
+		for (i = 0; i < ctx->commits.nr; i++) {
+			struct commit *c = ctx->commits.items[i];
+			struct commit_list *parent;
+
+			if (!oidset_contains(&included, &c->object.oid))
+				continue;
+
+			for (parent = c->parents; parent; parent = parent->next) {
+				if (!commit_parent_in_graph_or_set(parent->item,
+								   &included,
+								   base_graph)) {
+					oidset_remove(&included, &c->object.oid);
+					changed = 1;
+					break;
+				}
+			}
+		}
+	} while (changed);
+
+	ctx->num_extra_edges = 0;
+	for (i = dst = 0; i < ctx->commits.nr; i++) {
+		struct commit *c = ctx->commits.items[i];
+		unsigned int num_parents;
+
+		if (!oidset_contains(&included, &c->object.oid))
+			continue;
+
+		ctx->commits.items[dst++] = c;
+		num_parents = commit_list_count(c->parents);
+		if (num_parents > 2)
+			ctx->num_extra_edges += num_parents - 1;
+	}
+	ctx->commits.nr = dst;
+
+	oidset_clear(&included);
+}
+
 static int write_graph_chunk_base_1(struct hashfile *f,
 				    struct commit_graph *g)
 {
@@ -2672,6 +2748,10 @@ int write_commit_graph(struct odb_source *source,
 	close_reachable(&ctx);
 
 	copy_oids_to_commits(&ctx);
+	filter_commits_for_commit_graph(&ctx,
+					ctx.split && (!ctx.opts ||
+						      ctx.opts->split_flags != COMMIT_GRAPH_SPLIT_REPLACE) ?
+					g : NULL);
 
 	if (ctx.commits.nr >= GRAPH_EDGE_LAST_MASK) {
 		error(_("too many commits to write graph"));
@@ -2697,15 +2777,7 @@ int write_commit_graph(struct odb_source *source,
 		struct commit *c = ctx.commits.items[i];
 
 		if (repo_parse_commit(r, c)) {
-			error(_("failed to parse commit %s"),
-			      oid_to_hex(&c->object.oid));
-			res = -1;
-			if (!ctx.split)
-				ctx.num_commit_graphs_after = 0;
-			goto cleanup;
-		}
-		if (c->date < 0) {
-			error(_("cannot write commit-graph with negative commit date for %s"),
+			error(_("unable to parse commit %s"),
 			      oid_to_hex(&c->object.oid));
 			res = -1;
 			if (!ctx.split)

@@ -151,6 +151,9 @@ static struct child_process *get_helper(struct transport *transport)
 	if (have_git_dir())
 		strvec_pushf(&helper->env, "%s=%s",
 			     GIT_DIR_ENVIRONMENT, repo_get_git_dir(the_repository));
+	if (transport->cloning)
+		strvec_pushf(&helper->env, "%s=1",
+			     GIT_KANADE_CLONE_REMOTE_ACCESS);
 
 	helper->trace2_child_class = helper->args.v[0]; /* "remote-<name>" */
 

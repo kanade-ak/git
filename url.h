@@ -22,6 +22,7 @@ void end_url_with_slash(struct strbuf *buf, const char *url);
 void str_end_url_with_slash(const char *url, char **dest);
 
 int url_is_local_not_ssh(const char *url);
+int url_is_allowed_by_kanade_whitelist(const char *url);
 
 enum url_scheme {
 	URL_SCHEME_UNKNOWN = 0,

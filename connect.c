@@ -1422,6 +1422,7 @@ struct child_process *git_connect(int fd[2], const char *url,
 	signal(SIGCHLD, SIG_DFL);
 
 	scheme = parse_connect_url(url, &hostandport, &path);
+	transport_check_url_allowed(url);
 	if ((flags & CONNECT_DIAG_URL) && (scheme != URL_SCHEME_SSH)) {
 		printf("Diag: url=%s\n", url ? url : "NULL");
 		printf("Diag: protocol=%s\n", url_scheme_name(scheme));

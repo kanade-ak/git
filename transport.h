@@ -184,6 +184,11 @@ int is_transport_allowed(const char *type, int from_user);
  * and die otherwise.
  */
 void transport_check_allowed(const char *type);
+void transport_check_url_allowed(const char *url);
+void transport_set_clone_url_bypass(int enabled);
+int transport_clone_url_bypass_enabled(void);
+
+#define GIT_KANADE_CLONE_REMOTE_ACCESS "GIT_KANADE_CLONE_REMOTE_ACCESS"
 
 /* Transport options which apply to git:// and scp-style URLs */
 

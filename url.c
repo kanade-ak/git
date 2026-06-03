@@ -1,4 +1,5 @@
 #include "git-compat-util.h"
+#include "abspath.h"
 #include "hex-ll.h"
 #include "strbuf.h"
 #include "url.h"
@@ -139,6 +140,114 @@ int url_is_local_not_ssh(const char *url)
 	const char *slash = strchr(url, '/');
 	return !colon || (slash && slash < colon) ||
 		(has_dos_drive_prefix(url) && is_valid_path(url));
+}
+
+static int kanade_host_matches(const char *host, size_t len)
+{
+	const char suffix[] = "kanade.one";
+	size_t suffix_len = strlen(suffix);
+
+	if (len >= 2 && host[0] == '[' && host[len - 1] == ']')
+		return 0;
+
+	while (len && host[len - 1] == '.')
+		len--;
+
+	if (len == suffix_len)
+		return !strncasecmp(host, suffix, suffix_len);
+	if (len > suffix_len + 1 &&
+	    host[len - suffix_len - 1] == '.' &&
+	    !strncasecmp(host + len - suffix_len, suffix, suffix_len))
+		return 1;
+	return 0;
+}
+
+static const char *find_last_at_before(const char *start, const char *end)
+{
+	const char *at = NULL;
+
+	for (; start < end; start++) {
+		if (*start == '@')
+			at = start;
+	}
+	return at;
+}
+
+static int kanade_check_url_host(const char *host, const char *end)
+{
+	const char *at;
+
+	if (host >= end)
+		return 0;
+
+	at = find_last_at_before(host, end);
+	if (at)
+		host = at + 1;
+
+	if (host >= end)
+		return 0;
+
+	if (*host == '[') {
+		const char *close = memchr(host, ']', end - host);
+		if (!close)
+			return 0;
+		end = close + 1;
+	} else {
+		const char *colon = memchr(host, ':', end - host);
+		if (colon)
+			end = colon;
+	}
+
+	return kanade_host_matches(host, end - host);
+}
+
+int url_is_allowed_by_kanade_whitelist(const char *url)
+{
+	const char *p = url;
+	const char *scheme_end, *host, *end;
+	int helper_url = 0;
+
+	if (!p || !*p)
+		return 1;
+
+	/*
+	 * Remote-helper URLs are of the form "helper::real-url". Check the
+	 * real URL so helpers cannot hide an unapproved network destination.
+	 */
+	scheme_end = strstr(p, "::");
+	if (scheme_end) {
+		helper_url = 1;
+		p = scheme_end + 2;
+	}
+
+	if (url_is_local_not_ssh(p)) {
+		if (helper_url && !is_absolute_path(p) &&
+		    !starts_with(p, "./") && !starts_with(p, "../"))
+			return 0;
+		return 1;
+	}
+
+	if (is_url(p)) {
+		scheme_end = strstr(p, "://");
+		host = scheme_end + 3;
+		end = host + strcspn(host, "/?#");
+
+		if (scheme_end == p + 4 && !strncasecmp(p, "file", 4)) {
+			if (host == end || has_dos_drive_prefix(host))
+				return 1;
+			if (end - host == 9 && !strncasecmp(host, "localhost", 9))
+				return 1;
+			return kanade_check_url_host(host, end);
+		}
+
+		return kanade_check_url_host(host, end);
+	}
+
+	end = strchr(p, ':');
+	if (!end)
+		return 1;
+
+	return kanade_check_url_host(p, end);
 }
 
 enum url_scheme url_get_scheme(const char *name)
