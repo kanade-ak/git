@@ -205,23 +205,24 @@ static struct tm *time_to_tm_local(timestamp_t time, struct tm *tm)
  */
 static int local_time_tzoffset(time_t t, struct tm *tm)
 {
-	time_t t_local;
-	int offset, eastwest;
+	timestamp_t t_utc = t;
+	timestamp_t t_local, offset;
+	int eastwest;
 
-	localtime_r(&t, tm);
-	t_local = tm_to_time_t(tm);
-	if (t_local == -1)
+	if (!localtime_r(&t, tm) || tm_to_timestamp_t(tm, &t_local))
 		return 0; /* error; just use +0000 */
-	if (t_local < t) {
+	if (t_local < t_utc) {
 		eastwest = -1;
-		offset = t - t_local;
+		offset = t_utc - t_local;
 	} else {
 		eastwest = 1;
-		offset = t_local - t;
+		offset = t_local - t_utc;
 	}
 	offset /= 60; /* in minutes */
 	offset = (offset % 60) + ((offset / 60) * 100);
-	return offset * eastwest;
+	if (offset > INT_MAX)
+		return 0; /* error; just use +0000 */
+	return (int)offset * eastwest;
 }
 
 /*
@@ -335,7 +336,9 @@ struct date_mode date_mode_from_type(enum date_mode_type type)
 	return mode;
 }
 
-static void show_date_normal(struct strbuf *buf, timestamp_t time, struct tm *tm, int tz, struct tm *human_tm, int human_tz, int local)
+static void show_date_normal(struct strbuf *buf, timestamp_t time,
+			     struct tm *tm, int tz, struct tm *human_tm,
+			     int human_tz, int local, int human)
 {
 	struct {
 		unsigned int	year:1,
@@ -346,8 +349,8 @@ static void show_date_normal(struct strbuf *buf, timestamp_t time, struct tm *tm
 				tz:1;
 	} hide = { 0 };
 
-	hide.tz = local || tz == human_tz;
-	hide.year = tm->tm_year == human_tm->tm_year;
+	hide.tz = local || (human && tz == human_tz);
+	hide.year = human && tm->tm_year == human_tm->tm_year;
 	if (hide.year) {
 		if (tm->tm_mon == human_tm->tm_mon) {
 			if (tm->tm_mday > human_tm->tm_mday) {
@@ -376,7 +379,7 @@ static void show_date_normal(struct strbuf *buf, timestamp_t time, struct tm *tm
 	 *  (a) only show details when recent enough to matter
 	 *  (b) keep the maximum length "similar", and in check
 	 */
-	if (human_tm->tm_year) {
+	if (human) {
 		hide.seconds = 1;
 		hide.tz |= !hide.date;
 		hide.wday = hide.time = !hide.year;
@@ -482,7 +485,8 @@ const char *show_date(timestamp_t time, int tz, struct date_mode mode)
 		strbuf_addftime(&timebuf, mode.strftime_fmt, tm, tz,
 				!mode.local);
 	else
-		show_date_normal(&timebuf, time, tm, tz, &human_tm, human_tz, mode.local);
+		show_date_normal(&timebuf, time, tm, tz, &human_tm, human_tz,
+				 mode.local, mode.type == DATE_HUMAN);
 	return timebuf.buf;
 }
 
@@ -643,7 +647,7 @@ static int set_date(int year, int month, int day, struct tm *now_tm, time_t now,
 				return 1;
 			r->tm_year = now_tm->tm_year;
 		}
-		else if (year >= 1000 && year < 2100)
+		else if (year >= 1000)
 			r->tm_year = year - 1900;
 		else if (year > 70 && year < 100)
 			r->tm_year = year;
@@ -870,7 +874,7 @@ static int match_digit(const char *date, struct tm *tm, int *offset, int *tm_gmt
 			unsigned int minutes = num % 100;
 			unsigned int hours = num / 100;
 			*offset = hours*60 + minutes;
-		} else if (num > 1900 && num < 2100)
+		} else if (num > 1900 && num <= INT_MAX)
 			tm->tm_year = num - 1900;
 		return n;
 	}
@@ -989,9 +993,6 @@ static int match_object_header_date(const char *date, timestamp_t *timestamp, in
 	return 0;
 }
 
-/* timestamp of 2099-12-31T23:59:59Z, including 32 leap days */
-static const timestamp_t timestamp_max = (((timestamp_t)2100 - 1970) * 365 + 32) * 24 * 60 * 60 - 1;
-
 /* Gr. strptime is crap for this; it doesn't have a way to require RFC2822
    (i.e. English) day/month names, and it doesn't work correctly with %z. */
 int parse_date_basic(const char *date, timestamp_t *timestamp, int *offset)
@@ -1067,9 +1068,6 @@ int parse_date_basic(const char *date, timestamp_t *timestamp, int *offset)
 				  timestamp))
 			return -1;
 	}
-	if (*timestamp > timestamp_max)
-		return -1;
-
 	return 0; /* success */
 }
 
@@ -1235,7 +1233,7 @@ static void pending_number(struct tm *tm, int *num)
 		else if (tm->tm_mon < 0 && number < 13)
 			tm->tm_mon = number-1;
 		else if (tm->tm_year < 0) {
-			if (number > 1969 && number < 2100)
+			if (number > 1969)
 				tm->tm_year = number - 1900;
 			else if (number > 69 && number < 100)
 				tm->tm_year = number;

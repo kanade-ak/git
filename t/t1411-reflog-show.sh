@@ -169,4 +169,22 @@ test_expect_success 'git log -g -p shows diffs vs. parents' '
 	test_cmp expect actual
 '
 
+cat >expect <<'EOF'
+commit: epoch HEAD@{0 +0000}
+EOF
+test_expect_success 'reflog shows epoch timestamp entries' '
+	test_when_finished "rm -rf epoch-reflog" &&
+	git init epoch-reflog &&
+	(
+		cd epoch-reflog &&
+		test_commit before &&
+		echo epoch >before.t &&
+		git add before.t &&
+		GIT_AUTHOR_DATE="0 +0000" GIT_COMMITTER_DATE="0 +0000" \
+			git commit -m epoch &&
+		git reflog -1 --date=raw --format="%gs %gd" >../actual
+	) &&
+	test_cmp expect actual
+'
+
 test_done

@@ -243,6 +243,18 @@ test_expect_success 'integer overflow in timestamps is reported' '
 	test_grep "error in commit $new.*integer overflow" out
 '
 
+test_expect_success 'negative zero timestamp is reported' '
+	git cat-file commit HEAD >basis &&
+	sed "s/^\\(author .*> \\)[0-9]*/\\1-0/" \
+		<basis >negative-zero-timestamp &&
+	new=$(git hash-object --literally -t commit -w --stdin <negative-zero-timestamp) &&
+	test_when_finished "remove_object $new" &&
+	git update-ref refs/heads/bogus "$new" &&
+	test_when_finished "git update-ref -d refs/heads/bogus" &&
+	test_must_fail git fsck 2>out &&
+	test_grep "error in commit $new.*zero-padded date" out
+'
+
 test_expect_success 'commit with NUL in header' '
 	git cat-file commit HEAD >basis &&
 	sed "s/author ./author Q/" <basis | q_to_nul >commit-NUL-header &&

@@ -932,7 +932,7 @@ static int fsck_ident(const char **ident, const char *ident_end,
 		return report(options, oid, type, FSCK_MSG_BAD_DATE,
 			      "invalid author/committer line - bad date");
 	if ((*p == '0' && p[1] != ' ') ||
-	    (*p == '-' && p[1] == '0' && p[2] != ' '))
+	    (*p == '-' && p[1] == '0'))
 		return report(options, oid, type, FSCK_MSG_ZERO_PADDED_DATE, "invalid author/committer line - zero-padded date");
 	if (date_overflows(parse_timestamp_from_buf(&p, ident_end)))
 		return report(options, oid, type, FSCK_MSG_BAD_DATE_OVERFLOW, "invalid author/committer line - date causes integer overflow");

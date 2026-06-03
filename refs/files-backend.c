@@ -5,6 +5,7 @@
 #include "../abspath.h"
 #include "../config.h"
 #include "../copy.h"
+#include "../date.h"
 #include "../environment.h"
 #include "../gettext.h"
 #include "../hash.h"
@@ -2184,9 +2185,13 @@ static int show_one_reflog_ent(struct files_ref_store *refs,
 	    parse_oid_hex_algop(p, &ooid, &p, refs->base.repo->hash_algo) || *p++ != ' ' ||
 	    parse_oid_hex_algop(p, &noid, &p, refs->base.repo->hash_algo) || *p++ != ' ' ||
 	    !(email_end = strchr(p, '>')) ||
-	    email_end[1] != ' ' ||
-	    !(timestamp = parse_timestamp(email_end + 2, &message, 10)) ||
-	    !message || message[0] != ' ' ||
+	    email_end[1] != ' ')
+		return 0; /* corrupt? */
+	errno = 0;
+	timestamp = parse_timestamp(email_end + 2, &message, 10);
+	if (errno || date_overflows(timestamp) ||
+	    !message || message == email_end + 2 ||
+	    message[0] != ' ' ||
 	    (message[1] != '+' && message[1] != '-') ||
 	    !isdigit(message[2]) || !isdigit(message[3]) ||
 	    !isdigit(message[4]) || !isdigit(message[5]))
