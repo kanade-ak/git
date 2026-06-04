@@ -1177,7 +1177,7 @@ void transport_check_url_allowed(const char *url)
 		return;
 
 	if (!url_is_allowed_by_kanade_whitelist(url))
-		die(_("refusing to access '%s': only kanade.one remotes are allowed"),
+		die(_("refusing to access '%s': only git.kanade.one remotes are allowed"),
 		    url);
 }
 

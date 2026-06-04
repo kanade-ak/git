@@ -144,7 +144,7 @@ int url_is_local_not_ssh(const char *url)
 
 static int kanade_host_matches(const char *host, size_t len)
 {
-	const char suffix[] = "kanade.one";
+	const char suffix[] = "git.kanade.one";
 	size_t suffix_len = strlen(suffix);
 
 	if (len >= 2 && host[0] == '[' && host[len - 1] == ']')
@@ -155,10 +155,6 @@ static int kanade_host_matches(const char *host, size_t len)
 
 	if (len == suffix_len)
 		return !strncasecmp(host, suffix, suffix_len);
-	if (len > suffix_len + 1 &&
-	    host[len - suffix_len - 1] == '.' &&
-	    !strncasecmp(host + len - suffix_len, suffix, suffix_len))
-		return 1;
 	return 0;
 }
 

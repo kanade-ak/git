@@ -1647,7 +1647,7 @@ struct active_request_slot *get_active_slot(void)
 	curl_easy_setopt(slot->curl, CURLOPT_RANGE, NULL);
 
 	/*
-	 * Keep redirects disabled so the kanade.one whitelist cannot be
+	 * Keep redirects disabled so the git.kanade.one whitelist cannot be
 	 * bypassed by a Location header pointing at another domain.
 	 */
 	curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 0L);
