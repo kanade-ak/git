@@ -49,6 +49,11 @@ static void kanade_check_http_url_allowed(const char *url)
 		transport_check_url_allowed(url);
 }
 
+static int kanade_clone_remote_access_enabled(void)
+{
+	return git_env_bool(GIT_KANADE_CLONE_REMOTE_ACCESS, 0);
+}
+
 static int curl_ssl_verify = -1;
 static int curl_ssl_try;
 static char *curl_http_version;
@@ -1647,10 +1652,16 @@ struct active_request_slot *get_active_slot(void)
 	curl_easy_setopt(slot->curl, CURLOPT_RANGE, NULL);
 
 	/*
-	 * Keep redirects disabled so the git.kanade.one whitelist cannot be
-	 * bypassed by a Location header pointing at another domain.
+	 * Keep redirects disabled for whitelist-enforced operations so the
+	 * Location header cannot bypass the git.kanade.one host check. Clone
+	 * is explicitly outside the whitelist, so preserve Git's configured
+	 * redirect behavior in the clone helper process.
 	 */
-	curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 0L);
+	if (kanade_clone_remote_access_enabled() &&
+	    http_follow_config == HTTP_FOLLOW_ALWAYS)
+		curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 1L);
+	else
+		curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 0L);
 
 	curl_easy_setopt(slot->curl, CURLOPT_IPRESOLVE, git_curl_ipresolve);
 	curl_easy_setopt(slot->curl, CURLOPT_HTTPAUTH, http_auth_methods);
@@ -2262,6 +2273,10 @@ static int http_request(const char *url,
 	strbuf_addstr(&buf, "Pragma:");
 	if (options->no_cache)
 		strbuf_addstr(&buf, " no-cache");
+	if (kanade_clone_remote_access_enabled() &&
+	    options->initial_request &&
+	    http_follow_config == HTTP_FOLLOW_INITIAL)
+		curl_easy_setopt(slot->curl, CURLOPT_FOLLOWLOCATION, 1L);
 
 	headers = curl_slist_append(headers, buf.buf);
 

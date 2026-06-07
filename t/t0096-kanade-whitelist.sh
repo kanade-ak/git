@@ -45,6 +45,12 @@ test_expect_success 'clone is not restricted by the git.kanade.one whitelist' '
 	! grep "only git.kanade.one remotes are allowed" err
 '
 
+test_expect_success 'clone child upload-pack access is not restricted' '
+	env GIT_KANADE_CLONE_REMOTE_ACCESS=1 \
+		git fetch-pack --diag-url git@example.com:repo >actual &&
+	test_grep "userandhost=git@example.com" actual
+'
+
 test_expect_success 'bare kanade.one SSH-style remotes are rejected' '
 	test_must_fail git fetch-pack --diag-url git@kanade.one:repo 2>err &&
 	test_grep "only git.kanade.one remotes are allowed" err

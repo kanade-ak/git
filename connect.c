@@ -1398,6 +1398,12 @@ static void fill_ssh_args(struct child_process *conn, const char *ssh_host,
  * will hopefully be changed in a libification effort, to return NULL when
  * the connection failed).
  */
+static int kanade_clone_upload_pack_access(enum git_connect_service service)
+{
+	return service == GIT_CONNECT_UPLOAD_PACK &&
+	       git_env_bool(GIT_KANADE_CLONE_REMOTE_ACCESS, 0);
+}
+
 struct child_process *git_connect(int fd[2], const char *url,
 				  enum git_connect_service service,
 				  const char *prog, int flags)
@@ -1422,7 +1428,8 @@ struct child_process *git_connect(int fd[2], const char *url,
 	signal(SIGCHLD, SIG_DFL);
 
 	scheme = parse_connect_url(url, &hostandport, &path);
-	transport_check_url_allowed(url);
+	if (!kanade_clone_upload_pack_access(service))
+		transport_check_url_allowed(url);
 	if ((flags & CONNECT_DIAG_URL) && (scheme != URL_SCHEME_SSH)) {
 		printf("Diag: url=%s\n", url ? url : "NULL");
 		printf("Diag: protocol=%s\n", url_scheme_name(scheme));
