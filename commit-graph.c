@@ -883,6 +883,7 @@ static void fill_commit_graph_info(struct commit *item, struct commit_graph *g, 
 	struct commit_graph_data *graph_data;
 	uint32_t lex_index, offset_pos;
 	uint64_t date_high, date_low, offset;
+	timestamp_t stored_date;
 
 	while (pos < g->num_commits_in_base)
 		g = g->base_graph;
@@ -898,7 +899,17 @@ static void fill_commit_graph_info(struct commit *item, struct commit_graph *g, 
 
 	date_high = get_be32(commit_data + g->hash_algo->rawsz + 8) & 0x3;
 	date_low = get_be32(commit_data + g->hash_algo->rawsz + 12);
-	item->date = (timestamp_t)((date_high << 32) | date_low);
+	stored_date = (timestamp_t)((date_high << 32) | date_low);
+
+	/*
+	 * The commit-graph file format stores commit dates in 34 unsigned
+	 * bits, so the writer clamps pre-epoch dates to zero.  Never
+	 * clobber a real date taken from the object itself with the
+	 * clamped sentinel; generation data is still computed against
+	 * the stored date so it matches what the writer recorded.
+	 */
+	if (stored_date)
+		item->date = stored_date;
 
 	if (g->read_generation_data) {
 		offset = (timestamp_t)get_be32(g->chunk_generation_data + st_mult(sizeof(uint32_t), lex_index));
@@ -910,10 +921,10 @@ static void fill_commit_graph_info(struct commit *item, struct commit_graph *g, 
 			offset_pos = offset ^ CORRECTED_COMMIT_DATE_OFFSET_OVERFLOW;
 			if (g->chunk_generation_data_overflow_size / sizeof(uint64_t) <= offset_pos)
 				die(_("commit-graph overflow generation data is too small"));
-			graph_data->generation = item->date +
+			graph_data->generation = stored_date +
 				get_be64(g->chunk_generation_data_overflow + sizeof(uint64_t) * offset_pos);
 		} else
-			graph_data->generation = item->date + offset;
+			graph_data->generation = stored_date + offset;
 	} else
 		graph_data->generation = get_be32(commit_data + g->hash_algo->rawsz + 8) >> 2;
 
@@ -927,7 +938,8 @@ static inline void set_commit_tree(struct commit *c, struct tree *t)
 }
 
 static int fill_commit_in_graph(struct commit *item,
-				struct commit_graph *g, uint32_t pos)
+				struct commit_graph *g, uint32_t pos,
+				int allow_zero_date)
 {
 	uint32_t edge_value;
 	uint32_t parent_data_pos;
@@ -939,6 +951,17 @@ static int fill_commit_in_graph(struct commit *item,
 		g = g->base_graph;
 
 	fill_commit_graph_info(item, g, pos);
+
+	/*
+	 * A stored date of zero may be a pre-epoch date the writer had
+	 * to clamp (the file format cannot represent negative dates).
+	 * Refuse the graph fast path in that case so the caller falls
+	 * back to parsing the object and sees the real date.  Callers
+	 * that explicitly want the graph view (verify) opt in via
+	 * allow_zero_date.
+	 */
+	if (!allow_zero_date && !item->date)
+		return 0;
 
 	lex_index = pos - g->num_commits_in_base;
 	commit_data = g->chunk_commit_data + st_mult(g->hash_algo->rawsz + 16, lex_index);
@@ -1045,14 +1068,15 @@ struct commit *lookup_commit_in_graph(struct repository *repo, const struct obje
 	if (commit->object.parsed)
 		return commit;
 
-	if (!fill_commit_in_graph(commit, g, pos))
+	if (!fill_commit_in_graph(commit, g, pos, 0))
 		return NULL;
 
 	return commit;
 }
 
 static int parse_commit_in_graph_one(struct commit_graph *g,
-				     struct commit *item)
+				     struct commit *item,
+				     int allow_zero_date)
 {
 	uint32_t pos;
 
@@ -1060,7 +1084,7 @@ static int parse_commit_in_graph_one(struct commit_graph *g,
 		return 1;
 
 	if (find_commit_pos_in_graph(item, g, &pos))
-		return fill_commit_in_graph(item, g, pos);
+		return fill_commit_in_graph(item, g, pos, allow_zero_date);
 
 	return 0;
 }
@@ -1079,7 +1103,7 @@ int parse_commit_in_graph(struct repository *r, struct commit *item)
 	g = prepare_commit_graph(r);
 	if (!g)
 		return 0;
-	return parse_commit_in_graph_one(g, item);
+	return parse_commit_in_graph_one(g, item, 0);
 }
 
 void load_commit_graph_info(struct repository *r, struct commit *item)
@@ -1217,6 +1241,25 @@ static const struct object_id *commit_to_oid(size_t index, const void *table)
 	return &commits[index]->object.oid;
 }
 
+/*
+ * The commit date a commit-graph file ends up storing for a commit: the
+ * format only has 34 unsigned bits for it, so pre-epoch (negative) dates
+ * are clamped to zero and larger dates are masked to the low 34 bits.
+ * Readers treat a stored date of zero as "parse the object for the real
+ * date" (see fill_commit_in_graph), and generation data offsets must be
+ * computed against this stored value to stay consistent.
+ */
+static timestamp_t commit_graph_date(const struct commit *c)
+{
+	timestamp_t date = c->date;
+
+	if (date < 0)
+		return 0;
+	if (sizeof(date) > 4)
+		date &= ((timestamp_t)1 << 34) - 1;
+	return date;
+}
+
 static int write_graph_chunk_data(struct hashfile *f,
 				  void *data)
 {
@@ -1230,6 +1273,7 @@ static int write_graph_chunk_data(struct hashfile *f,
 		struct object_id *tree;
 		int edge_value;
 		uint32_t packedDate[2];
+		timestamp_t date;
 		display_progress(ctx->progress, ++ctx->progress_cnt);
 
 		if (repo_parse_commit_no_graph(ctx->r, *list))
@@ -1304,14 +1348,15 @@ static int write_graph_chunk_data(struct hashfile *f,
 			} while (parent);
 		}
 
-		if (sizeof((*list)->date) > 4)
-			packedDate[0] = htonl(((*list)->date >> 32) & 0x3);
+		date = commit_graph_date(*list);
+		if (sizeof(date) > 4)
+			packedDate[0] = htonl((date >> 32) & 0x3);
 		else
 			packedDate[0] = 0;
 
 		packedDate[0] |= htonl(*topo_level_slab_at(ctx->topo_levels, *list) << 2);
 
-		packedDate[1] = htonl((*list)->date);
+		packedDate[1] = htonl(date);
 		hashwrite(f, packedDate, 8);
 
 		list++;
@@ -1341,14 +1386,7 @@ static int write_graph_chunk_data(struct hashfile *f,
  */
 static timestamp_t compute_generation_offset(struct commit *c)
 {
-	timestamp_t masked_date;
-
-	if (sizeof(timestamp_t) > 4)
-		masked_date = c->date & (((timestamp_t) 1 << 34) - 1);
-	else
-		masked_date = c->date;
-
-	return commit_graph_data_at(c)->generation - masked_date;
+	return commit_graph_data_at(c)->generation - commit_graph_date(c);
 }
 
 static int write_graph_chunk_generation_data(struct hashfile *f,
@@ -1670,7 +1708,13 @@ static void compute_reachable_generation_numbers(
 			struct commit *current = list->item;
 			struct commit_list *parent;
 			int all_parents_computed = 1;
-			uint32_t max_gen = 0;
+			/*
+			 * Corrected commit dates (generation v2) are
+			 * timestamps and exceed 32 bits for commits dated
+			 * after 2106; a 32-bit accumulator would truncate
+			 * them and break the monotonicity invariant.
+			 */
+			timestamp_t max_gen = 0;
 
 			for (parent = current->parents; parent; parent = parent->next) {
 				repo_parse_commit(info->r, parent->item);
@@ -2063,81 +2107,6 @@ static void copy_oids_to_commits(struct write_commit_graph_context *ctx)
 		commit_stack_push(&ctx->commits, commit);
 	}
 	stop_progress(&ctx->progress);
-}
-
-static int commit_parent_in_graph_or_set(struct commit *parent,
-					 struct oidset *included,
-					 struct commit_graph *base_graph)
-{
-	uint32_t pos;
-
-	if (oidset_contains(included, &parent->object.oid))
-		return 1;
-	return base_graph && find_commit_pos_in_graph(parent, base_graph, &pos);
-}
-
-static void filter_commits_for_commit_graph(struct write_commit_graph_context *ctx,
-					    struct commit_graph *base_graph)
-{
-	struct oidset included = OIDSET_INIT;
-	uint32_t i, dst;
-	int changed;
-
-	oidset_init(&included, ctx->commits.nr);
-
-	/*
-	 * The commit-graph file format stores commit dates in 34 unsigned bits.
-	 * Keep negative-date commits out of the graph instead of writing dates
-	 * that would be read back as different instants.
-	 */
-	for (i = 0; i < ctx->commits.nr; i++) {
-		struct commit *c = ctx->commits.items[i];
-
-		if (repo_parse_commit_no_graph(ctx->r, c)) {
-			oidset_insert(&included, &c->object.oid);
-			continue;
-		}
-		if (c->date >= 0)
-			oidset_insert(&included, &c->object.oid);
-	}
-
-	do {
-		changed = 0;
-		for (i = 0; i < ctx->commits.nr; i++) {
-			struct commit *c = ctx->commits.items[i];
-			struct commit_list *parent;
-
-			if (!oidset_contains(&included, &c->object.oid))
-				continue;
-
-			for (parent = c->parents; parent; parent = parent->next) {
-				if (!commit_parent_in_graph_or_set(parent->item,
-								   &included,
-								   base_graph)) {
-					oidset_remove(&included, &c->object.oid);
-					changed = 1;
-					break;
-				}
-			}
-		}
-	} while (changed);
-
-	ctx->num_extra_edges = 0;
-	for (i = dst = 0; i < ctx->commits.nr; i++) {
-		struct commit *c = ctx->commits.items[i];
-		unsigned int num_parents;
-
-		if (!oidset_contains(&included, &c->object.oid))
-			continue;
-
-		ctx->commits.items[dst++] = c;
-		num_parents = commit_list_count(c->parents);
-		if (num_parents > 2)
-			ctx->num_extra_edges += num_parents - 1;
-	}
-	ctx->commits.nr = dst;
-
-	oidset_clear(&included);
 }
 
 static int write_graph_chunk_base_1(struct hashfile *f,
@@ -2748,10 +2717,6 @@ int write_commit_graph(struct odb_source *source,
 	close_reachable(&ctx);
 
 	copy_oids_to_commits(&ctx);
-	filter_commits_for_commit_graph(&ctx,
-					ctx.split && (!ctx.opts ||
-						      ctx.opts->split_flags != COMMIT_GRAPH_SPLIT_REPLACE) ?
-					g : NULL);
 
 	if (ctx.commits.nr >= GRAPH_EDGE_LAST_MASK) {
 		error(_("too many commits to write graph"));
@@ -2772,19 +2737,6 @@ int write_commit_graph(struct odb_source *source,
 	}
 
 	ctx.trust_generation_numbers = validate_mixed_generation_chain(g);
-
-	for (i = 0; i < ctx.commits.nr; i++) {
-		struct commit *c = ctx.commits.items[i];
-
-		if (repo_parse_commit(r, c)) {
-			error(_("unable to parse commit %s"),
-			      oid_to_hex(&c->object.oid));
-			res = -1;
-			if (!ctx.split)
-				ctx.num_commit_graphs_after = 0;
-			goto cleanup;
-		}
-	}
 
 	compute_topological_levels(&ctx);
 	if (ctx.write_generation_data)
@@ -2892,7 +2844,7 @@ static int verify_one_commit_graph(struct commit_graph *g,
 		}
 
 		graph_commit = lookup_commit(r, &cur_oid);
-		if (!parse_commit_in_graph_one(g, graph_commit))
+		if (!parse_commit_in_graph_one(g, graph_commit, 1))
 			graph_report(_("failed to parse commit %s from commit-graph"),
 				     oid_to_hex(&cur_oid));
 	}
@@ -2946,7 +2898,7 @@ static int verify_one_commit_graph(struct commit_graph *g,
 			}
 
 			/* parse parent in case it is in a base graph */
-			parse_commit_in_graph_one(g, graph_parents->item);
+			parse_commit_in_graph_one(g, graph_parents->item, 1);
 
 			if (!oideq(&graph_parents->item->object.oid, &odb_parents->item->object.oid))
 				graph_report(_("commit-graph parent for %s is %s != %s"),
@@ -2990,7 +2942,7 @@ static int verify_one_commit_graph(struct commit_graph *g,
 				     generation,
 				     max_generation + 1);
 
-		if (graph_commit->date != odb_commit->date)
+		if (graph_commit->date != commit_graph_date(odb_commit))
 			graph_report(_("commit date for commit %s in commit-graph is %"PRItime" != %"PRItime),
 				     oid_to_hex(&cur_oid),
 				     graph_commit->date,
