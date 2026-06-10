@@ -127,6 +127,7 @@ integration_tests = [
   't0092-diagnose.sh',
   't0095-bloom.sh',
   't0096-kanade-whitelist.sh',
+  't0097-preepoch-fast-import.sh',
   't0100-previous.sh',
   't0101-at-syntax.sh',
   't0200-gettext-basic.sh',

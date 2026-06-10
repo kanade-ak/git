@@ -1958,16 +1958,25 @@ static int validate_raw_date(const char *src, struct strbuf *result, int strict)
 	const char *orig_src = src;
 	char *endp;
 	unsigned long num;
+	timestamp_t stamp;
 
 	errno = 0;
 
-	num = strtoul(src, &endp, 10);
+	/*
+	 * Negative timestamps name instants before the UNIX epoch; parse
+	 * the sign explicitly instead of relying on strtoul() wrapping it.
+	 * Reject zero-padded negative timestamps ("-0...") in strict mode
+	 * so we do not create objects that fsck flags as zeroPaddedDate.
+	 */
+	if (strict && src[0] == '-' && src[1] == '0')
+		return -1;
+	stamp = parse_timestamp(src, &endp, 10);
 	/*
 	 * NEEDSWORK: perhaps check for reasonable values? For example, we
 	 *            could error on values representing times more than a
 	 *            day in the future.
 	 */
-	if (errno || endp == src || *endp != ' ')
+	if (errno || endp == src || *endp != ' ' || date_overflows(stamp))
 		return -1;
 
 	src = endp + 1;
