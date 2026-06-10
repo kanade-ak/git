@@ -3,6 +3,7 @@
 test_description='pre-epoch raw dates in fast-import and fast-export'
 
 . ./test-lib.sh
+. "$TEST_DIRECTORY/lib-gpg.sh"
 
 test_expect_success 'fast-import accepts negative raw committer dates' '
 	git init preepoch &&
@@ -94,6 +95,18 @@ test_expect_success 'fast-export round-trips pre-epoch dates' '
 	git -C reimport fast-import <export &&
 	echo "-3061152000" >expect &&
 	git -C reimport log -1 --format=%ct refs/heads/main >actual &&
+	test_cmp expect actual
+'
+
+test_expect_success GPGSSH 'ssh signature verification works for pre-epoch committer dates' '
+	test_config gpg.format ssh &&
+	test_config user.signingkey "${GPGSSH_KEY_PRIMARY}" &&
+	test_config gpg.ssh.allowedSignersFile "${GPGSSH_ALLOWED_SIGNERS}" &&
+	GIT_AUTHOR_DATE="-3061152000 +0900" GIT_COMMITTER_DATE="-3061152000 +0900" \
+		git commit --allow-empty -S -m "signed pre-epoch commit" &&
+	git verify-commit HEAD &&
+	echo G >expect &&
+	git log -1 --format=%G? HEAD >actual &&
 	test_cmp expect actual
 '
 

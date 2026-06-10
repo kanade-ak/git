@@ -496,7 +496,15 @@ static int verify_ssh_signed_buffer(struct signature_check *sigc,
 		return -1;
 	}
 
-	if (sigc->payload_timestamp)
+	/*
+	 * The payload timestamp approximates the signing time, but
+	 * pre-epoch dates (negative timestamps, e.g. archival histories
+	 * whose committer date is the legal effective date) cannot have
+	 * been signing times and are rejected by ssh-keygen's
+	 * verify-time parser.  Fall back to verifying at the current
+	 * time, which is what ssh-keygen does without the option.
+	 */
+	if (sigc->payload_timestamp > 0)
 		strbuf_addf(&verify_time, "-Overify-time=%s",
 			show_date(sigc->payload_timestamp, 0, verify_date_mode));
 
